@@ -889,6 +889,8 @@ struct TOlapScanNode {
   22: optional i64 ann_sort_limit
   // Enable value predicate pushdown for MOR tables
   23: optional bool enable_mor_value_predicate_pushdown
+  // Read MOR table as DUP table: skip merge, skip delete sign
+  24: optional bool read_mor_as_dup
 }
 
 struct TEqJoinCondition {
