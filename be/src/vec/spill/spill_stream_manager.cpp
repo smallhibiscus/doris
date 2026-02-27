@@ -185,7 +185,7 @@ Status SpillStreamManager::register_spill_stream(RuntimeState* state, SpillStrea
 }
 
 void SpillStreamManager::delete_spill_stream(SpillStreamSPtr stream) {
-    stream->close();
+    (void)stream->close();
     stream->gc();
 }
 
