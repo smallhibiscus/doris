@@ -63,6 +63,7 @@ Status PartitionedHashJoinSinkLocalState::open(RuntimeState* state) {
     SCOPED_TIMER(exec_time_counter());
     SCOPED_TIMER(_open_timer);
     RETURN_IF_ERROR(PipelineXSpillSinkLocalState::open(state));
+    auto& p = _parent->cast<PartitionedHashJoinSinkOperatorX>();
     return p._partitioner->clone(state, _partitioner);
 }
 
