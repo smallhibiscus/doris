@@ -51,11 +51,11 @@ namespace pipeline {
 ///    specified column indices. Suitable for Aggregation where spill blocks have a
 ///    different schema (key columns at fixed positions 0..N-1).
 ///
-/// For each level of repartitioning, the partitioner uses the same CRC32 hash function
-/// on key columns but with the SpillPartitionChannelIds functor (bit rotation + modulo).
-/// Since all rows in the input stream already belong to the same parent partition (they
-/// had identical partition indices at the previous level), re-hashing with the same
-/// function still produces a valid and well-distributed split into FANOUT sub-partitions.
+/// For repartitioning, hash computation and final channel mapping are separated:
+/// - a partitioner can provide either direct channel ids or raw hash values
+///   (e.g. SpillRePartitionChannelIds returns raw hash),
+/// - SpillRepartitioner then applies the final channel mapping strategy.
+/// This keeps repartition policy centralized and allows level-aware mapping.
 ///
 /// Processing is incremental: each call to repartition() processes up to MAX_BATCH_BYTES
 /// (32 MB) of data and then returns, allowing the pipeline scheduler to yield and
@@ -77,7 +77,7 @@ public:
     // @param profile      RuntimeProfile for counters.
     // @param fanout       Number of output sub-partitions. Defaults to 8.
     void init(std::unique_ptr<vectorized::PartitionerBase> partitioner, RuntimeProfile* profile,
-              int fanout);
+              int fanout, int repartition_level);
 
     /// Initialize the repartitioner with explicit key column indices (for Aggregation).
     /// Computes CRC32 hash directly on the specified columns without using VExpr.
@@ -94,7 +94,7 @@ public:
     // @param fanout              Number of output sub-partitions. Defaults to 8.
     void init_with_key_columns(std::vector<size_t> key_column_indices,
                                std::vector<vectorized::DataTypePtr> key_data_types,
-                               RuntimeProfile* profile, int fanout);
+                               RuntimeProfile* profile, int fanout, int repartition_level);
 
     /// Repartition data from input_stream into output_streams.
     ///
@@ -147,6 +147,8 @@ private:
             RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams,
             std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers, bool force);
 
+    uint32_t _map_hash_to_partition(uint32_t hash) const;
+
     // Partitioner mode (used by Hash Join)
     std::unique_ptr<vectorized::PartitionerBase> _partitioner;
 
@@ -159,6 +161,9 @@ private:
     RuntimeProfile::Counter* _repartition_rows = nullptr;
     // dynamic fanout to allow operator-configured partition counts
     int _fanout = 8;
+    // Target repartition level (parent level + 1). Used to derive level-aware
+    // channel mapping from raw hash values.
+    int _repartition_level = 0;
 
 public:
     // Accessor for configured fanout

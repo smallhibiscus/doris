@@ -167,7 +167,7 @@ Status PartitionedHashJoinProbeLocalState::open(RuntimeState* state) {
     // Create a fanout-sized partitioner for repartitioning.
     // Use operator-configured partition count instead of static FANOUT.
     _fanout_partitioner =
-            std::make_unique<SpillPartitionerType>(static_cast<int>(p._partition_count));
+            std::make_unique<SpillRePartitionerType>(static_cast<int>(p._partition_count));
     RETURN_IF_ERROR(_fanout_partitioner->init(p._probe_exprs));
     RETURN_IF_ERROR(_fanout_partitioner->prepare(state, p._child->row_desc()));
     RETURN_IF_ERROR(_fanout_partitioner->open(state));
@@ -463,13 +463,21 @@ Status PartitionedHashJoinProbeLocalState::repartition_current_partition(
     std::unique_ptr<vectorized::PartitionerBase> fanout_clone;
     RETURN_IF_ERROR(_fanout_partitioner->clone(state, fanout_clone));
     _repartitioner.init(std::move(fanout_clone), operator_profile(),
-                        static_cast<int>(p._partition_count));
+                        static_cast<int>(p._partition_count), new_level);
 
     // Repartition build stream
     std::vector<vectorized::SpillStreamSPtr> build_output_streams;
     RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
             state, p.node_id(), fmt::format("hash_build_repart_l{}", new_level), operator_profile(),
             build_output_streams, static_cast<int>(p._partition_count)));
+
+    // Repartition already-recovered in-memory build data first to avoid extra
+    // write/read I/O through an intermediate spill stream.
+    if (_recovered_build_block && _recovered_build_block->rows() > 0) {
+        auto recovered_block = _recovered_build_block->to_block();
+        _recovered_build_block.reset();
+        RETURN_IF_ERROR(_repartitioner.route_block(state, recovered_block, build_output_streams));
+    }
 
     if (partition.build_stream && partition.build_stream->ready_for_reading()) {
         partition.build_stream->set_read_counters(operator_profile());
@@ -500,7 +508,7 @@ Status PartitionedHashJoinProbeLocalState::repartition_current_partition(
         std::unique_ptr<vectorized::PartitionerBase> probe_fanout_clone;
         RETURN_IF_ERROR(_fanout_partitioner->clone(state, probe_fanout_clone));
         _repartitioner.init(std::move(probe_fanout_clone), operator_profile(),
-                            static_cast<int>(p._partition_count));
+                            static_cast<int>(p._partition_count), new_level);
 
         bool done = false;
         while (!done && !state->is_cancelled()) {
@@ -1036,52 +1044,12 @@ size_t PartitionedHashJoinProbeOperatorX::get_reserve_mem_size(RuntimeState* sta
 //   (a) _current_partition.build_stream  (SpillStream, may have been partially read)
 //   (b) _recovered_build_block           (partially-recovered MutableBlock)
 //
-// repartition_current_partition expects a single unified SpillStream, so any
-// data already pulled into _recovered_build_block is flushed back to a new
-// stream (draining any unread tail from the original build_stream first).
+// During repartition we route (b) directly into sub-streams first, then
+// continue reading (a), avoiding an extra round of spill write/read for (b).
 Status PartitionedHashJoinProbeLocalState::revoke_build_data(RuntimeState* state) {
     auto& p = _parent->cast<PartitionedHashJoinProbeOperatorX>();
     DCHECK(_child_eos) << "revoke_build_data should only be called after child EOS";
     DCHECK(_spill_queue_initialized) << "queue must be initialized before revoke_build_data";
-
-    // If _recovered_build_block has data, flush it (plus any unread tail of
-    // build_stream) into a single combined SpillStream so that
-    // repartition_current_partition sees a unified build stream.
-    if (_recovered_build_block && _recovered_build_block->rows() > 0) {
-        vectorized::SpillStreamSPtr combined_stream;
-        RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-                state, combined_stream, print_id(state->query_id()),
-                fmt::format("hash_build_revoke_l{}", _current_partition.level + 1), p.node_id(),
-                std::numeric_limits<size_t>::max(), operator_profile()));
-
-        // Write the already-recovered portion first.
-        auto block = _recovered_build_block->to_block();
-        _recovered_build_block.reset();
-        RETURN_IF_ERROR(combined_stream->spill_block(state, block, /*eof=*/false));
-
-        // Drain any unread tail from the original build_stream.
-        if (_current_partition.build_stream &&
-            _current_partition.build_stream->ready_for_reading()) {
-            _current_partition.build_stream->set_read_counters(operator_profile());
-            bool eos = false;
-            while (!eos && !state->is_cancelled()) {
-                vectorized::Block tail_block;
-                RETURN_IF_ERROR(
-                        _current_partition.build_stream->read_next_block_sync(&tail_block, &eos));
-                if (tail_block.rows() > 0) {
-                    RETURN_IF_ERROR(combined_stream->spill_block(state, tail_block, /*eof=*/false));
-                }
-            }
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                    _current_partition.build_stream);
-            _current_partition.build_stream.reset();
-        }
-
-        RETURN_IF_ERROR(combined_stream->close());
-        _current_partition.build_stream = std::move(combined_stream);
-    }
-    // If _recovered_build_block is empty but build_stream is still active,
-    // repartition_current_partition reads it directly — no extra work needed.
 
     VLOG_DEBUG << fmt::format(
             "Query:{}, hash join probe:{}, task:{}, revoke_build_data: "

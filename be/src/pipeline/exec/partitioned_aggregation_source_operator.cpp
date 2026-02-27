@@ -414,7 +414,8 @@ Status PartitionedAggLocalState::_repartition_partition(RuntimeState* state,
 
     // Initialize repartitioner with key columns and operator-configured fanout.
     _repartitioner.init_with_key_columns(std::move(key_column_indices), std::move(key_data_types),
-                                         operator_profile(), static_cast<int>(p._partition_count));
+                                         operator_profile(), static_cast<int>(p._partition_count),
+                                         new_level);
 
     std::vector<vectorized::SpillStreamSPtr> output_streams;
     RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
@@ -494,7 +495,8 @@ Status PartitionedAggLocalState::setup_in_memory_agg_op(RuntimeState* state) {
 }
 
 Status PartitionedAggLocalState::flush_hash_table_to_sub_streams(
-        RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams) {
+        RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams,
+        int repartition_level) {
     auto& p = _parent->cast<PartitionedAggSourceOperatorX>();
     auto* runtime_state = _runtime_state.get();
 
@@ -508,7 +510,8 @@ Status PartitionedAggLocalState::flush_hash_table_to_sub_streams(
     }
 
     _repartitioner.init_with_key_columns(std::move(key_column_indices), std::move(key_data_types),
-                                         operator_profile(), static_cast<int>(p._partition_count));
+                                         operator_profile(), static_cast<int>(p._partition_count),
+                                         repartition_level);
 
     in_mem_state->aggregate_data_container->init_once();
     bool inner_eos = false;
@@ -557,7 +560,7 @@ Status PartitionedAggLocalState::flush_and_repartition(
             output_streams, static_cast<int>(p._partition_count)));
 
     // 2. Flush the in-memory hash table into the sub-streams.
-    RETURN_IF_ERROR(flush_hash_table_to_sub_streams(state, output_streams));
+    RETURN_IF_ERROR(flush_hash_table_to_sub_streams(state, output_streams, new_level));
 
     // 3. Repartition remaining unread streams into the same sub-streams.
     for (auto& stream : remaining_streams) {

@@ -19,7 +19,6 @@
 
 #include <glog/logging.h>
 
-#include <algorithm>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -38,22 +37,25 @@ namespace doris::pipeline {
 #include "common/compile_check_begin.h"
 
 void SpillRepartitioner::init(std::unique_ptr<vectorized::PartitionerBase> partitioner,
-                              RuntimeProfile* profile, int fanout) {
+                              RuntimeProfile* profile, int fanout, int repartition_level) {
     _partitioner = std::move(partitioner);
     _use_column_index_mode = false;
     _fanout = fanout;
+    _repartition_level = repartition_level;
     _repartition_timer = ADD_TIMER_WITH_LEVEL(profile, "SpillRepartitionTime", 1);
     _repartition_rows = ADD_COUNTER_WITH_LEVEL(profile, "SpillRepartitionRows", TUnit::UNIT, 1);
 }
 
 void SpillRepartitioner::init_with_key_columns(std::vector<size_t> key_column_indices,
                                                std::vector<vectorized::DataTypePtr> key_data_types,
-                                               RuntimeProfile* profile, int fanout) {
+                                               RuntimeProfile* profile, int fanout,
+                                               int repartition_level) {
     _key_column_indices = std::move(key_column_indices);
     _key_data_types = std::move(key_data_types);
     _use_column_index_mode = true;
     _partitioner.reset();
     _fanout = fanout;
+    _repartition_level = repartition_level;
     _repartition_timer = ADD_TIMER_WITH_LEVEL(profile, "SpillRepartitionTime", 1);
     _repartition_rows = ADD_COUNTER_WITH_LEVEL(profile, "SpillRepartitionRows", TUnit::UNIT, 1);
 }
@@ -155,15 +157,16 @@ Status SpillRepartitioner::_route_block(
         RuntimeState* state, vectorized::Block& block,
         std::vector<vectorized::SpillStreamSPtr>& output_streams,
         std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers) {
-    // Compute partition assignment for every row in the block
+    // Compute raw hash values for every row in the block.
     RETURN_IF_ERROR(_partitioner->do_partitioning(state, &block));
-    const auto& channel_ids = _partitioner->get_channel_ids();
+    const auto& hash_vals = _partitioner->get_channel_ids();
     const auto rows = block.rows();
 
     // Build per-partition row index lists
     std::vector<std::vector<uint32_t>> partition_row_indexes(_fanout);
     for (uint32_t i = 0; i < rows; ++i) {
-        partition_row_indexes[channel_ids[i]].emplace_back(i);
+        auto partition_idx = _map_hash_to_partition(hash_vals[i]);
+        partition_row_indexes[partition_idx].emplace_back(i);
     }
 
     // Scatter rows into per-partition buffers
@@ -210,9 +213,9 @@ Status SpillRepartitioner::_route_block_by_columns(
                                        static_cast<uint32_t>(rows));
     }
 
-    // Apply SpillPartitionChannelIds: ((hash >> 16) | (hash << 16)) % _fanout
+    // Map hash values to output channels with level-aware mixing.
     for (size_t i = 0; i < rows; ++i) {
-        hashes[i] = ((hashes[i] >> 16) | (hashes[i] << 16)) % _fanout;
+        hashes[i] = _map_hash_to_partition(hashes[i]);
     }
 
     // Build per-partition row index lists
@@ -265,6 +268,16 @@ Status SpillRepartitioner::_flush_all_buffers(
         }
     }
     return Status::OK();
+}
+
+uint32_t SpillRepartitioner::_map_hash_to_partition(uint32_t hash) const {
+    DCHECK_GT(_fanout, 0);
+    // Use a level-dependent salt so each repartition level has a different
+    // projection from hash-space to partition-space.
+    constexpr uint32_t LEVEL_SALT_BASE = 0x9E3779B9U;
+    auto salt = static_cast<uint32_t>(_repartition_level + 1) * LEVEL_SALT_BASE;
+    auto mixed = vectorized::crc32c_shuffle_mix(hash ^ salt);
+    return ((mixed >> 16) | (mixed << 16)) % static_cast<uint32_t>(_fanout);
 }
 
 #include "common/compile_check_end.h"

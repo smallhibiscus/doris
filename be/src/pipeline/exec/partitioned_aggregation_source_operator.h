@@ -86,7 +86,8 @@ public:
     /// Flush the current in-memory hash table by draining it as blocks and routing
     /// each block through the repartitioner into the output sub-streams.
     Status flush_hash_table_to_sub_streams(
-            RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams);
+            RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams,
+            int repartition_level);
 
     /// Flush the in-memory hash table into FANOUT sub-streams, repartition remaining
     /// unread streams from `remaining_streams`, and push resulting sub-partitions into

@@ -35,7 +35,14 @@
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
+// Default spill partitioner for initial partitioning (level-0). Repartition
+// paths may use different channel-id policies (e.g. raw-hash mode).
 using SpillPartitionerType = vectorized::Crc32HashPartitioner<vectorized::SpillPartitionChannelIds>;
+
+// Repartition partitioner: keeps raw hash (no final modulo) so SpillRepartitioner
+// can apply level-aware hash mixing and channel mapping.
+using SpillRePartitionerType =
+        vectorized::Crc32HashPartitioner<vectorized::SpillRePartitionChannelIds>;
 
 struct SpillContext {
     std::atomic_int running_tasks_count;
