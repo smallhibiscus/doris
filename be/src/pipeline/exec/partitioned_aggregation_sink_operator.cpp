@@ -366,6 +366,10 @@ Status PartitionedAggSinkLocalState::_spill_hash_table(RuntimeState* state,
                             state, context, Base::_shared_state->_spill_partitions[i],
                             spill_infos[i].keys_, spill_infos[i].values_, nullptr, false);
                     RETURN_IF_ERROR(status);
+                    spill_infos[i].keys_.clear();
+                    spill_infos[i].keys_.shrink_to_fit();
+                    spill_infos[i].values_.clear();
+                    spill_infos[i].values_.shrink_to_fit();
                 }
             }
         }
