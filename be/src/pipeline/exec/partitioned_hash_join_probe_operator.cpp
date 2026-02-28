@@ -322,6 +322,7 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
         SCOPED_TIMER(_recovery_build_timer);
         bool eos = false;
         Status status;
+        size_t read_size = 0;
         while (!eos) {
             vectorized::Block block;
             status = build_stream->read_next_block_sync(&block, &eos);
@@ -336,6 +337,8 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
             if (UNLIKELY(state->is_cancelled())) {
                 break;
             }
+
+            read_size += block.allocated_bytes();
             if (!_recovered_build_block) {
                 _recovered_build_block = vectorized::MutableBlock::create_unique(std::move(block));
             } else {
@@ -344,7 +347,7 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
                     break;
                 }
             }
-            if (_recovered_build_block->allocated_bytes() >= state->spill_buffer_size_bytes()) {
+            if (read_size >= state->spill_buffer_size_bytes()) {
                 break;
             }
         }
@@ -400,7 +403,7 @@ Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
                 read_size += block.allocated_bytes();
                 blocks.emplace_back(std::move(block));
             }
-            if (read_size >= vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM) {
+            if (read_size >= state->spill_buffer_size_bytes()) {
                 break;
             }
         }
