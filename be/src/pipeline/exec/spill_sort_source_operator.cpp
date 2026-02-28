@@ -74,12 +74,7 @@ Status SpillSortLocalState::_execute_merge_sort_spill_streams(RuntimeState* stat
     auto& parent = Base::_parent->template cast<Parent>();
     SCOPED_TIMER(_spill_merge_sort_timer);
     Status status;
-    Defer defer {[&]() {
-        for (auto& stream : _current_merging_streams) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
-        }
-        _current_merging_streams.clear();
-    }};
+    Defer defer {[&]() { _current_merging_streams.clear(); }};
     vectorized::Block merge_sorted_block;
     vectorized::SpillStreamSPtr tmp_stream;
     while (!state->is_cancelled()) {
@@ -236,9 +231,6 @@ Status SpillSortSourceOperatorX::close(RuntimeState* state) {
     // close shared state. Centralize cleanup so resources are released when
     // the pipeline task finishes.
     auto& local_state = get_local_state(state);
-    for (auto& stream : local_state._current_merging_streams) {
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
-    }
     local_state._current_merging_streams.clear();
     local_state._merger.reset();
 

@@ -53,6 +53,7 @@ SpillStream::SpillStream(RuntimeState* state, int64_t stream_id, SpillDataDir* d
 }
 
 SpillStream::~SpillStream() {
+    (void)close();
     gc();
 }
 

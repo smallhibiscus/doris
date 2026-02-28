@@ -98,20 +98,7 @@ Status PartitionedAggLocalState::close(RuntimeState* state) {
         return Status::OK();
     }
 
-    // Clean up partition queue resources.
-    for (auto& partition : _partition_queue) {
-        for (auto& stream : partition.streams) {
-            if (stream) {
-                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
-            }
-        }
-    }
     _partition_queue.clear();
-    for (auto& stream : _current_partition.streams) {
-        if (stream) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
-        }
-    }
     _current_partition.streams.clear();
 
     return Base::close(state);
@@ -365,7 +352,6 @@ Status PartitionedAggLocalState::_recover_blocks_from_partition(RuntimeState* st
             }
 
             if (eos) {
-                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
                 partition.streams.pop_front();
             }
         }
@@ -427,7 +413,6 @@ Status PartitionedAggLocalState::_repartition_partition(RuntimeState* state,
             continue;
         }
         if (stream->get_written_bytes() == 0) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
             stream.reset();
             continue;
         }
@@ -436,7 +421,6 @@ Status PartitionedAggLocalState::_repartition_partition(RuntimeState* state,
         while (!done && !state->is_cancelled()) {
             RETURN_IF_ERROR(_repartitioner.repartition(state, stream, output_streams, &done));
         }
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
         stream.reset();
     }
     partition.streams.clear();
@@ -454,8 +438,6 @@ Status PartitionedAggLocalState::_repartition_partition(RuntimeState* state,
                 _max_partition_level_seen = new_level;
                 COUNTER_SET(_max_partition_level, int64_t(_max_partition_level_seen));
             }
-        } else if (output_streams[i]) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(output_streams[i]);
         }
     }
 
@@ -568,7 +550,6 @@ Status PartitionedAggLocalState::flush_and_repartition(
             continue;
         }
         if (stream->get_written_bytes() == 0) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
             stream.reset();
             continue;
         }
@@ -577,7 +558,6 @@ Status PartitionedAggLocalState::flush_and_repartition(
         while (!done && !state->is_cancelled()) {
             RETURN_IF_ERROR(_repartitioner.repartition(state, stream, output_streams, &done));
         }
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
         stream.reset();
     }
     remaining_streams.clear();
@@ -596,8 +576,6 @@ Status PartitionedAggLocalState::flush_and_repartition(
                 _max_partition_level_seen = new_level;
                 COUNTER_SET(_max_partition_level, int64_t(_max_partition_level_seen));
             }
-        } else if (output_streams[i]) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(output_streams[i]);
         }
     }
 

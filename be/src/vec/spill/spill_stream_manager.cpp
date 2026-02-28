@@ -184,11 +184,6 @@ Status SpillStreamManager::register_spill_stream(RuntimeState* state, SpillStrea
     return Status::OK();
 }
 
-void SpillStreamManager::delete_spill_stream(SpillStreamSPtr stream) {
-    (void)stream->close();
-    stream->gc();
-}
-
 void SpillStreamManager::gc(int32_t max_work_time_ms) {
     bool exists = true;
     bool has_work = false;

@@ -180,24 +180,7 @@ Status PartitionedHashJoinProbeLocalState::close(RuntimeState* state) {
     if (_closed) {
         return Status::OK();
     }
-    // Clean up any remaining spill partition queue entries
-    for (auto& entry : _spill_partition_queue) {
-        if (entry.build_stream) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(entry.build_stream);
-        }
-        if (entry.probe_stream) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(entry.probe_stream);
-        }
-    }
     _spill_partition_queue.clear();
-    if (_current_partition.build_stream) {
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                _current_partition.build_stream);
-    }
-    if (_current_partition.probe_stream) {
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                _current_partition.probe_stream);
-    }
     _current_partition = SpillPartitionInfo {};
     _queue_probe_blocks.clear();
 
@@ -366,7 +349,6 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
             }
         }
         if (eos) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(build_stream);
             build_stream.reset();
         }
         return status;
@@ -423,7 +405,6 @@ Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
             }
         }
         if (eos) {
-            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(probe_stream);
             probe_stream.reset();
         }
         return st;
@@ -487,11 +468,9 @@ Status PartitionedHashJoinProbeLocalState::repartition_current_partition(
                                                        build_output_streams, &done));
         }
         // Input build stream fully consumed, clean up
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.build_stream);
         partition.build_stream.reset();
     } else if (partition.build_stream) {
         // Stream exists but not ready for reading (empty or not finalized).
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.build_stream);
         partition.build_stream.reset();
     }
     RETURN_IF_ERROR(SpillRepartitioner::finalize(build_output_streams));
@@ -516,11 +495,9 @@ Status PartitionedHashJoinProbeLocalState::repartition_current_partition(
                                                        probe_output_streams, &done));
         }
         // Input probe stream fully consumed, clean up
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.probe_stream);
         partition.probe_stream.reset();
     } else if (partition.probe_stream) {
         // Stream exists but not ready for reading (empty or not finalized).
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.probe_stream);
         partition.probe_stream.reset();
     }
     RETURN_IF_ERROR(SpillRepartitioner::finalize(probe_output_streams));
@@ -535,16 +512,6 @@ Status PartitionedHashJoinProbeLocalState::repartition_current_partition(
             if (new_level > _max_partition_level_seen) {
                 _max_partition_level_seen = new_level;
                 COUNTER_SET(_max_partition_level, int64_t(_max_partition_level_seen));
-            }
-        } else {
-            // Clean up empty streams
-            if (build_output_streams[i]) {
-                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                        build_output_streams[i]);
-            }
-            if (probe_output_streams[i]) {
-                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                        probe_output_streams[i]);
             }
         }
     }
@@ -767,14 +734,8 @@ Status PartitionedHashJoinProbeOperatorX::pull(doris::RuntimeState* state,
                             int64_t(local_state._max_partition_level_seen));
             } else {
                 // No build data for this partition — discard streams.
-                if (build_stream) {
-                    ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(build_stream);
-                    build_stream.reset();
-                }
-                if (probe_stream) {
-                    ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(probe_stream);
-                    probe_stream.reset();
-                }
+                build_stream.reset();
+                probe_stream.reset();
             }
         }
         local_state._spill_queue_initialized = true;

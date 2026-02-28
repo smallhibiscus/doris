@@ -133,9 +133,6 @@ public:
                                  int32_t node_id, size_t batch_bytes,
                                  RuntimeProfile* operator_profile);
 
-    // 标记SpillStream需要被删除，在GC线程中异步删除落盘文件
-    void delete_spill_stream(SpillStreamSPtr spill_stream);
-
     void gc(int32_t max_work_time_ms);
 
     void update_spill_write_bytes(int64_t bytes) { _spill_write_bytes_counter->increment(bytes); }

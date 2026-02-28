@@ -340,15 +340,7 @@ Status AggSpillPartition::get_spill_stream(RuntimeState* state, int node_id,
     return Status::OK();
 }
 void AggSpillPartition::close() {
-    if (spilling_stream_) {
-        (void)spilling_stream_->close();
-        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(spilling_stream_);
-        spilling_stream_.reset();
-    }
-    for (auto& stream : spill_streams_) {
-        (void)stream->close();
-        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
-    }
+    spilling_stream_.reset();
     spill_streams_.clear();
 }
 
@@ -367,9 +359,6 @@ void SpillSortSharedState::close() {
         return;
     }
     DCHECK(!false_close && is_closed);
-    for (auto& stream : sorted_streams) {
-        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
-    }
     sorted_streams.clear();
 }
 

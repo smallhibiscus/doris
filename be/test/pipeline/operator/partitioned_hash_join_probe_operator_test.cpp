@@ -215,8 +215,6 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, spill_probe_blocks) {
         if (!local_state->_probe_spilling_streams[i]) {
             continue;
         }
-        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                local_state->_probe_spilling_streams[i]);
         local_state->_probe_spilling_streams[i].reset();
     }
 
@@ -411,7 +409,6 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskError) {
     auto status = local_state->recover_probe_blocks_from_disk(_helper.runtime_state.get(),
                                                               test_partition, has_data);
 
-    ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(spilling_stream);
     spilling_stream.reset();
 
     ASSERT_FALSE(status.ok());
